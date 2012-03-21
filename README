@@ -1,0 +1,56 @@
+** THIS IS ALPHA VERSION **
+
+NAME
+    SWF::ForcibleConverter - forcible convert SWF version
+
+SYNOPSIS
+        use SWF::ForcibleConverter;
+    
+        my $fc = SWF::ForcibleConverter->new;
+        my $size = $fc->convert9($input, $output);
+
+DESCRIPTION
+    Forcibly convert SWF file into version 9 format if it is less than 9.
+
+CONSTRUCTOR
+    An constructor new() accepts an hash reference as options.
+
+    Following key / value pairs are available.
+
+  buffer_size
+    Buffer size (Bytes) when reading input data. Default is 4096.
+
+METHOD
+  buffer_size
+        my $size = $fc->buffer_size; # getter
+        $fc->buffer_size($integer);  # setter
+
+    An access method to buffer_size.
+
+  convert9
+        my $input   = "/path/to/original.swf";
+        my $output  = "converted.swf";
+        my $bytes   = $fc->convert9($input, $output);
+
+    Convert input SWF into output with changing format version 9. It will
+    return output bytes.
+
+    Both input and output is omissible. In that case, STDOUT/STDERR is used.
+
+        $ cat in.swf | perl -MSWF::ForcibleConverter -e \
+            'SWF::ForcibleConverter->new->convert9' > out.swf
+
+    Note that an output is always uncompressed.
+
+AUTHOR
+    WATANABE Hiroaki <hwat@mac.com>
+
+    This library is free software; you can redistribute it and/or modify it
+    under the same terms as Perl itself.
+
+SEE ALSO
+    SWF::ForcibleConverter was prepared with reference to "ForcibleLoader"
+    that is produced by Spark project with the kind of respect:
+
+    <http://www.libspark.org/wiki/yossy/ForcibleLoader>
+
