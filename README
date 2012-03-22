@@ -1,7 +1,5 @@
-** THIS IS ALPHA VERSION **
-
 NAME
-    SWF::ForcibleConverter - forcible convert SWF version
+    SWF::ForcibleConverter - convert SWF version forcibly
 
 SYNOPSIS
         use SWF::ForcibleConverter;
@@ -10,15 +8,20 @@ SYNOPSIS
         my $size = $fc->convert9($input, $output);
 
 DESCRIPTION
-    Forcibly convert SWF file into version 9 format if it is less than 9.
+    SWF::ForcibleConverter converts format of SWF file into the version 9
+    forcibly.
 
 CONSTRUCTOR
-    An constructor new() accepts an hash reference as options.
+    An constructor new() accepts an hash reference as configure option.
 
-    Following key / value pairs are available.
+        my $fc = SWF::ForcibleConverter->new({
+                    buffer_size => 4096,
+                    });
+
+    The option has following keys are available.
 
   buffer_size
-    Buffer size (Bytes) when reading input data. Default is 4096.
+    Buffer size (bytes) when reading input data. Default is 4096.
 
 METHOD
   buffer_size
@@ -32,15 +35,20 @@ METHOD
         my $output  = "converted.swf";
         my $bytes   = $fc->convert9($input, $output);
 
-    Convert input SWF into output with changing format version 9. It will
-    return output bytes.
+    Convert input SWF into output SWF with changing format version 9. And it
+    will return output file size.
 
-    Both input and output is omissible. In that case, STDOUT/STDERR is used.
+    Both input and output are omissible. In that case, it uses STDIN or
+    STDOUT.
 
         $ cat in.swf | perl -MSWF::ForcibleConverter -e \
             'SWF::ForcibleConverter->new->convert9' > out.swf
 
-    Note that an output is always uncompressed.
+TODO
+    Currently, an output is always uncompressed.
+
+    Will it be able to support the other versions? It is difficult for me...
+    :-(
 
 AUTHOR
     WATANABE Hiroaki <hwat@mac.com>

@@ -3,7 +3,7 @@ package SWF::ForcibleConverter;
 use strict;
 use warnings;
 use vars qw($VERSION $DEFAULT_BUF_SIZE $DEBUG);
-$VERSION            = '0.01_01';
+$VERSION            = '0.01_02';
 $DEFAULT_BUF_SIZE   = $ENV{SWF_FORCIBLECONVERTER_DEFAULT_BUF_SIZE} || 4096;
 $DEBUG              = $ENV{SWF_FORCIBLECONVERTER_DEBUG};
 
@@ -94,7 +94,7 @@ sub _version {
 sub _set_version_9 {
     my $self    = shift;
     my $header  = shift;
-    substr($header, 3, 1, 0x09);
+    substr($header, 3, 1, "\x09");
     return $header;
 }
 
@@ -125,17 +125,17 @@ sub _get_body_position {
 
 sub version {
     my $self    = shift;
-    die "TODO";
+    die "TODO?";
 }
 
 sub is_compressed {
     my $self    = shift;
-    die "TODO";
+    die "TODO?";
 }
 
 sub uncompress {
     my $self    = shift;
-    die "TODO";
+    die "TODO?";
 }
 
 sub convert9 { # with close handles
@@ -151,8 +151,10 @@ sub convert9 { # with close handles
     # ready to read
     my $r = $self->_open_r($input);
 
+
     # read header, 8 bytes from origin
     $size = $r->read($header, HEADER_SIZE);
+
     die "Failed to read the header" if( ! defined $size or $size != HEADER_SIZE );
     $header_v9 = $header;
 
@@ -169,7 +171,9 @@ sub convert9 { # with close handles
     # read first chunk that includes info for body position
     my $first = undef;
     $size = $r->read($first, $buf_size);
-    die "Failed to read the first chunk" if( ! defined $size or $size != $buf_size );
+    if( ! defined $size or ( $size != $buf_size and ! $r->eof ) ){
+        die "Failed to read the first chunk (@{[ defined $size ? $size : 'undef' ]})";
+    }
     my $pos = $self->_get_body_position(substr($first, 0, 1));
 
     # read and write header with updating the version to 9
@@ -177,6 +181,7 @@ sub convert9 { # with close handles
     $DEBUG and say STDERR "version: $version";
 
     if( $version < 9 ){
+        $DEBUG and say STDERR "update version 9";
         $header_v9 = $self->_set_version_9($header_v9);
     }
 
@@ -210,43 +215,95 @@ sub convert9 { # with close handles
             $total += length $buf;
         }
     
-    }elsif( 8 <= $version ){
-        # find file attributes position
-
-        die "Version of swf is 8, it does not be implemented yet";
-        
     }else{
+    
+        my $result = undef;
+        my $offset = $pos - HEADER_SIZE;
+        if( 8 == $version ){
+            # find file attributes position
 
-        $writer->($header_v9);
-        $total += length $header_v9;
-        
-        $buf = substr($first, 0, $pos - HEADER_SIZE );
-        $writer->($buf);
-        $total += length $buf;
-        
-        # magic
-        $buf = "\x44\x11\x08\x00\x00\x00";
-        $writer->($buf);
-        $total += length $buf;
-    
-        # remains
-        $buf = substr($first, $pos - HEADER_SIZE );
-        $writer->($buf);
-        $total += length $buf;
-    
-        while( ! $r->eof ){
-            undef $buf;
-            $size = $r->read($buf, $buf_size);
-            if( ! defined $size or $size != $buf_size ){
-                if( ! $r->eof ){
-                    die "Failed to read a chunk";
+                                 # require Config;
+            my $shortsize   = 2; # $Config::Config{shortsize};
+            my $intsize     = 4; # $Config::Config{intsize};
+
+            my $currentp = $offset;
+            while( 1 ){
+                last if( length $first < $currentp - HEADER_SIZE );
+                my $short = unpack "x${currentp}s", $first;
+                my $tag = $short >> 6;
+                if( $tag == 69 ){
+                    $result = $currentp;
+                    last;
                 }
+                $currentp += 2;
+                
+                my $len = $short & 0x3f;
+                if( $len == 0x3f ){
+                    $len = unpack "x${currentp}i", $first;
+                    $currentp += $intsize;
+                }
+                $currentp += $len;
             }
+        }
+
+        if( defined $result ){
+            $DEBUG and say STDERR "result: $result (". ($result + 2 - HEADER_SIZE) .")";
+            
+            my $target = unpack('C', substr($first, $result + 2 - HEADER_SIZE, 1) );
+            $target |= 0x08;
+            substr($first, $result + 2 - HEADER_SIZE, 1, pack('C',$target));
+
+            $writer->($header_v9);
+            $total += length $header_v9;
+
+            $writer->($first);
+            $total += length $first;
+            
+            while( ! $r->eof ){
+                undef $buf;
+                $size = $r->read($buf, $buf_size);
+                if( ! defined $size or $size != $buf_size ){
+                    if( ! $r->eof ){
+                        die "Failed to read a chunk";
+                    }
+                }
+                $writer->($buf);
+                $total += length $buf;
+            }
+
+        }else{
+
+            $writer->($header_v9);
+            $total += length $header_v9;
+            
+            $buf = substr($first, 0, $offset );
             $writer->($buf);
             $total += length $buf;
+            
+            # magic
+            $buf = "\x44\x11\x08\x00\x00\x00";
+            $writer->($buf);
+            $total += length $buf;
+        
+            # remains
+            $buf = substr($first, $offset );
+            $writer->($buf);
+            $total += length $buf;
+        
+            while( ! $r->eof ){
+                undef $buf;
+                $size = $r->read($buf, $buf_size);
+                if( ! defined $size or $size != $buf_size ){
+                    if( ! $r->eof ){
+                        die "Failed to read a chunk";
+                    }
+                }
+                $writer->($buf);
+                $total += length $buf;
+            }
         }
     }
-
+    
     $self->_close_w;
     $self->_close_r;
     
@@ -261,7 +318,7 @@ __END__
 
 =head1 NAME
 
-SWF::ForcibleConverter - forcible convert SWF version
+SWF::ForcibleConverter - convert SWF version forcibly
 
 =head1 SYNOPSIS
 
@@ -272,17 +329,21 @@ SWF::ForcibleConverter - forcible convert SWF version
 
 =head1 DESCRIPTION
 
-Forcibly convert SWF file into version 9 format if it is less than 9.
+SWF::ForcibleConverter converts format of SWF file into the version 9 forcibly.
 
 =head1 CONSTRUCTOR
 
-An constructor new() accepts an hash reference as options.
+An constructor new() accepts an hash reference as configure option.
 
-Following key / value pairs are available.
+    my $fc = SWF::ForcibleConverter->new({
+                buffer_size => 4096,
+                });
+
+The option has following keys are available.
 
 =head2 buffer_size
 
-Buffer size (Bytes) when reading input data. Default is 4096.
+Buffer size (bytes) when reading input data. Default is 4096.
 
 =head1 METHOD
 
@@ -299,16 +360,21 @@ An access method to buffer_size.
     my $output  = "converted.swf";
     my $bytes   = $fc->convert9($input, $output);
 
-Convert input SWF into output with changing format version 9.
-It will return output bytes.
+Convert input SWF into output SWF with changing format version 9.
+And it will return output file size.
 
-Both input and output is omissible.
-In that case, STDOUT/STDERR is used.
+Both input and output are omissible.
+In that case, it uses STDIN or STDOUT.
 
     $ cat in.swf | perl -MSWF::ForcibleConverter -e \
         'SWF::ForcibleConverter->new->convert9' > out.swf
 
-Note that an output is always uncompressed.
+=head1 TODO
+
+Currently, an output is always uncompressed.
+
+Will it be able to support the other versions?
+It is difficult for me... :-(
 
 =head1 AUTHOR
 
