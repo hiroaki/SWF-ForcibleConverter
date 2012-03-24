@@ -8,8 +8,8 @@ SYNOPSIS
         my $size = $fc->convert9($input, $output);
 
 DESCRIPTION
-    SWF::ForcibleConverter converts format of SWF file into the version 9
-    forcibly.
+    SWF::ForcibleConverter is a utility that converts format of SWF file
+    into the version 9 forcibly.
 
 CONSTRUCTOR
     An constructor new() accepts an hash reference as configure option.
@@ -21,28 +21,47 @@ CONSTRUCTOR
     The option has following keys are available.
 
   buffer_size
-    Buffer size (bytes) when reading input data. Default is 4096.
+    Buffer size (bytes) when reading input data.
+
+    This is for accessing the member directly, without validation, please
+    usually use [get|set]_buffer_size methods.
 
 METHOD
-  buffer_size
-        my $size = $fc->buffer_size; # getter
-        $fc->buffer_size($integer);  # setter
+    On the following explanation, $input and $output are file path or IO
+    object.
 
-    An access method to buffer_size.
+    Both are omissible. In that case, it uses STDIN or STDOUT.
 
-  convert9
+        $ cat in.swf | perl -MSWF::ForcibleConverter -e \
+            'SWF::ForcibleConverter->new->convert9' > out.swf
+
+  get_buffer_size
+    Get buffer size.
+
+  set_buffer_size($num)
+    Set buffer size.
+
+    Note that it is 4096 necessity at least, or croak.
+
+  version($input)
+    Get version of SWF file.
+
+  is_compressed($input)
+    Return true if input is compressed
+
+  uncompress($input, $output)
+    Convert input SWF into uncompressed one.
+
+    This method does not change format of version, simply outputs with
+    uncompressing.
+
+  convert9($input, $output)
         my $input   = "/path/to/original.swf";
         my $output  = "converted.swf";
         my $bytes   = $fc->convert9($input, $output);
 
-    Convert input SWF into output SWF with changing format version 9. And it
-    will return output file size.
-
-    Both input and output are omissible. In that case, it uses STDIN or
-    STDOUT.
-
-        $ cat in.swf | perl -MSWF::ForcibleConverter -e \
-            'SWF::ForcibleConverter->new->convert9' > out.swf
+    Convert input SWF into output SWF with changing version 9. And it
+    returns size of output.
 
 TODO
     Currently, an output is always uncompressed.

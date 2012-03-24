@@ -2,15 +2,28 @@ package SWF::ForcibleConverter;
 
 use strict;
 use warnings;
-use vars qw($VERSION $DEFAULT_BUF_SIZE $DEBUG);
-$VERSION            = '0.01_02';
-$DEFAULT_BUF_SIZE   = $ENV{SWF_FORCIBLECONVERTER_DEFAULT_BUF_SIZE} || 4096;
-$DEBUG              = $ENV{SWF_FORCIBLECONVERTER_DEBUG};
+use vars qw($VERSION $DEBUG);
+$VERSION    = '0.01_03';
+$DEBUG      = $ENV{SWF_FORCIBLECONVERTER_DEBUG};
 
-use IO::File;
-use IO::Handle;
+use Carp qw/croak/;
 
-use constant HEADER_SIZE => 8;
+use constant HEADER_SIZE        =>    8;
+use constant MIN_BUFFER_SIZE    => 4096;
+
+sub create_io_file {
+    require IO::File; IO::File->new(@_);
+}
+
+sub create_io_handle {
+    require IO::Handle; IO::Handle->new(@_);
+}
+
+sub create_io_uncompress {
+    require IO::Uncompress::Inflate;
+    IO::Uncompress::Inflate->new(@_)
+        or die "Cannot create IO::Uncompress::Inflate: $IO::Uncompress::Inflate::InflateError";
+}
 
 sub new {
     my $class = shift;
@@ -20,8 +33,14 @@ sub new {
     my $self = $args;
     bless $self, $class;
 
-    $self->{_r_io} = undef;
-    $self->{_w_io} = undef;
+    # stash
+    $self->{_r_io}          = undef; # handle for reading
+    $self->{_w_io}          = undef; # handle for writing
+    $self->{_header}        = undef; # original header HEADER_SIZE bytes
+
+    # you have to customize and set these chunks before drain()
+    $self->{_header_v9}     = undef; # header for output editing on
+    $self->{_first_chunk}   = undef; # the first chunk just behind header
 
     return $self;
 }
@@ -30,6 +49,24 @@ sub buffer_size {
     my $self = shift;
     return @_ ? $self->{buffer_size} = shift : $self->{buffer_size};
 }
+
+sub set_buffer_size {
+    my $self = shift;
+    my $size = shift;
+    croak "size of buffer is @{[ MIN_BUFFER_SIZE ]} necessity at least"
+        if( ! $size or $size < MIN_BUFFER_SIZE );
+    $self->buffer_size( $size );
+}
+
+sub get_buffer_size {
+    my $self = shift;
+    my $size = $self->buffer_size;
+    croak "size of buffer is @{[ MIN_BUFFER_SIZE ]} necessity at least"
+        if( ! $size or $size < MIN_BUFFER_SIZE );
+    $size;
+}
+
+#-----------------------------------------------------------
 
 sub _open_r {
     my $self = shift;
@@ -40,14 +77,20 @@ sub _open_r {
             if( ref($file) ){
                 $io = $file; # it sets opend file handle that is a "IO"
             }else{
-                $io = IO::File->new;
-                $io->open($file,"r") or die "Cannot open $file: $!";
+                $io = create_io_file;
+                $io->open($file,"r") or die "Cannot open $file for reading: $!";
             }
         }else{
-            $io = IO::Handle->new;
+            $io = create_io_handle;
             $io->fdopen(fileno(STDIN),"r") or die "Cannot open STDIN: $!";
         }
         $self->{_r_io} = $io;
+
+        # clear keeping header because input is reopend,
+        # it may be the other resource
+        $self->{_header} = undef; 
+        $self->{_header_v9} = undef;
+        $self->{_first_chunk} = undef;
     }
     return $self->{_r_io};
 }
@@ -58,10 +101,10 @@ sub _open_w {
     unless( $self->{_w_io} ){
         my $io;
         if( defined $file ){
-            $io = IO::File->new;
-            $io->open($file,"w") or die "Cannot open $file: $!";
+            $io = create_io_file;
+            $io->open($file,"w") or die "Cannot open $file for writing: $!";
         }else{
-            $io = IO::Handle->new;
+            $io = create_io_handle;
             $io->fdopen(fileno(STDOUT),"w") or die "Cannot open STDOUT: $!";
         }
         $self->{_w_io} = $io;
@@ -85,28 +128,171 @@ sub _close_w {
     }
 }
 
+sub _switch_input_handle_to_uncompress {
+    my $self    = shift;
+    my $input   = shift;
+    $self->{_r_io} = create_io_uncompress($input);
+}
+
 sub _version {
     my $self    = shift;
     my $header  = shift;
-    return ord(substr($header, 3, 1));
-}
-
-sub _set_version_9 {
-    my $self    = shift;
-    my $header  = shift;
-    substr($header, 3, 1, "\x09");
-    return $header;
+    ord(substr($header, 3, 1));
 }
 
 sub _is_compressed {
     my $self    = shift;
     my $header  = shift;
-    my $char = substr($header, 0, 1);
-    $char eq "\x43";
+    substr($header, 0, 1) eq "\x43";
 }
 
-sub _get_body_position {
+sub _modify_custom_header_to_version_9 {
     my $self    = shift;
+    my $h = $self->{_header_v9};
+    substr($h, 3, 1, "\x09");
+    $self->{_header_v9} = $h;
+}
+
+sub _modify_custom_header_to_uncompressed {
+    my $self = shift;
+    my $h = $self->{_header_v9};
+    substr($h, 0, 1, "\x46"); # "F"WS
+    $self->{_header_v9} = $h;
+}
+
+sub _modify_custom_header_to_compressed {
+    my $self = shift;
+    my $h = $self->{_header_v9};
+    substr($h, 0, 1, "\x43"); # "C"WS
+    $self->{_header_v9} = $h;
+}
+
+#-----------------------------------------------------------
+# io methods
+# 
+
+sub _read_header {
+    my $self    = shift;
+    my $input   = shift; # or STDIN
+    my $r = $self->_open_r($input);
+
+    # skip if it already read header
+    unless( $self->{_header} ){
+        
+        # read header, 8 bytes from othe rigin
+        my $header;
+        my $size = $r->read($header, HEADER_SIZE);
+        die "Failed to read the header" if( ! defined $size or $size != HEADER_SIZE );
+
+        $self->{_header}    = $header; # keep for reuse
+        $self->{_header_v9} = $header;
+    }
+    
+    return $self->{_header};
+}
+
+sub _read_first_chunk {
+    my $self    = shift;
+    my $input   = shift; # or STDIN
+    my $r       = $self->_open_r($input);
+    my $readsize= $self->get_buffer_size;
+
+    if( ! $self->{_header} and $self->{_first_chunk} ){
+        croak "It tried to read the first chunk although the header was not read";
+    }
+
+    if( $self->_is_compressed($self->_read_header($input)) ){
+        $r = $self->_switch_input_handle_to_uncompress($r);
+        $self->_modify_custom_header_to_uncompressed;
+    }
+
+    unless( $self->{_first_chunk} ){
+
+        my $chunk = undef;
+        my $size = $r->read($chunk, $readsize);
+        if( ! defined $size or ( $size != $readsize and ! $r->eof ) ){
+            die "Failed to read the first chunk (@{[ defined $size ? $size : 'undef' ]})";
+        }
+        $self->{_first_chunk} = $chunk;
+    }
+    
+    return $self->{_first_chunk};
+}
+
+sub _drain {
+    my $self    = shift;
+    my $input   = shift;
+    my $writer  = shift; # callback for writing
+
+    my $total = 0;
+
+    for my $chunk ( ($self->{_header_v9}, @{$self->{_first_chunk}}) ){
+        if( ref $chunk eq 'SCALAR' ){
+            $writer->($$chunk); $total += length $$chunk;
+        }else{
+            $writer->( $chunk); $total += length  $chunk;
+        }
+    }        
+    
+    my $r = $self->_open_r($input);
+    my $readsize = $self->get_buffer_size;
+    while( ! $r->eof ){
+        my $buf;
+        my $size = $r->read($buf, $readsize);
+        if( ! defined $size or $size != $readsize ){
+            if( ! $r->eof ){
+                die "Failed to read a chunk";
+            }
+        }
+        $writer->($buf);
+        $total += length $buf;
+    }
+
+    $self->_close_w;
+    $self->_close_r;
+
+    return $total;
+}
+
+#-----------------------------------------------------------
+# main public utilities
+# 
+
+sub version {
+    my $self    = shift;
+    my $input   = shift; # or STDIN
+    $self->_version($self->_read_header($input));
+}
+
+sub is_compressed {
+    my $self    = shift;
+    my $input   = shift; # or STDIN
+    $self->_is_compressed($self->_read_header($input));
+}
+
+#-----------------------------------------------------------
+# main jobs with drain will close handles
+# 
+
+sub uncompress {
+    my $self    = shift;
+    my $input   = shift; # or STDIN
+    my $writer  = shift; # or STDOUT
+
+    # ready to output
+    if( ref($writer) ne 'CODE' ){
+        my $w = $self->_open_w($writer);
+        $writer = sub {
+            $w->print($_[0]);
+        };
+    }
+
+    my $first = $self->_read_first_chunk($input);
+    $self->{_first_chunk} = [\$first];
+    $self->_drain($input, $writer);
+}
+
+sub _get_body_position { # function for ->covert9()
     my $the_9th = shift; # 9th char
 
     my $result  = 0;
@@ -123,66 +309,24 @@ sub _get_body_position {
     return $result;
 }
 
-sub version {
-    my $self    = shift;
-    die "TODO?";
-}
-
-sub is_compressed {
-    my $self    = shift;
-    die "TODO?";
-}
-
-sub uncompress {
-    my $self    = shift;
-    die "TODO?";
-}
-
-sub convert9 { # with close handles
+sub convert9 {
     my $self    = shift;
     my $input   = shift; # or STDIN
     my $writer  = shift; # or STDOUT
 
-    my ($buf, $size);
-    my $header      = undef; # keep original header is 8 bytes
-    my $header_v9   = undef; # converted header
-    my $buf_size    = $self->buffer_size || $DEFAULT_BUF_SIZE;
-
-    # ready to read
-    my $r = $self->_open_r($input);
-
-
-    # read header, 8 bytes from origin
-    $size = $r->read($header, HEADER_SIZE);
-
-    die "Failed to read the header" if( ! defined $size or $size != HEADER_SIZE );
-    $header_v9 = $header;
-
-    # check compressed
-    if( $self->_is_compressed($header) ){
-        $DEBUG and say STDERR "compressed";
-        require IO::Uncompress::Inflate;
-        $r = IO::Uncompress::Inflate->new($r)
-            or die "Cannot create IO::Uncompress::Inflate: $IO::Uncompress::Inflate::InflateError";
-        substr($header_v9, 0, 1, "\x46"); # "C"WS to "F"WS
-    }
-
+    # prepare
+    my $header      = $self->_read_header($input);
+    my $buf_size    = $self->get_buffer_size;
 
     # read first chunk that includes info for body position
-    my $first = undef;
-    $size = $r->read($first, $buf_size);
-    if( ! defined $size or ( $size != $buf_size and ! $r->eof ) ){
-        die "Failed to read the first chunk (@{[ defined $size ? $size : 'undef' ]})";
-    }
-    my $pos = $self->_get_body_position(substr($first, 0, 1));
+    my $first = $self->_read_first_chunk($input);
+    my $pos = _get_body_position(substr($first, 0, 1));
 
     # read and write header with updating the version to 9
     my $version = $self->_version($header);
-    $DEBUG and say STDERR "version: $version";
 
     if( $version < 9 ){
-        $DEBUG and say STDERR "update version 9";
-        $header_v9 = $self->_set_version_9($header_v9);
+        $self->_modify_custom_header_to_version_9;
     }
 
     # ready to output
@@ -196,25 +340,9 @@ sub convert9 { # with close handles
     my $total = 0;
     if( 9 <= $version ){
         # simply, copy (but uncompressed)
+        $self->{_first_chunk} = [\$first];
+        $total += $self->_drain($input, $writer);
 
-        $writer->($header_v9);
-        $total += length $header_v9;
-        
-        $writer->($first);
-        $total += length $first;
-        
-        while( ! $r->eof ){
-            undef $buf;
-            $size = $r->read($buf, $buf_size);
-            if( ! defined $size or $size != $buf_size ){
-                if( ! $r->eof ){
-                    die "Failed to read a chunk";
-                }
-            }
-            $writer->($buf);
-            $total += length $buf;
-        }
-    
     }else{
     
         my $result = undef;
@@ -230,14 +358,14 @@ sub convert9 { # with close handles
             while( 1 ){
                 last if( length $first < $currentp - HEADER_SIZE );
                 my $short = unpack "x${currentp}s", $first;
-                my $tag = $short >> 6;
+                my  $tag = $short >> 6;
                 if( $tag == 69 ){
                     $result = $currentp;
                     last;
                 }
                 $currentp += 2;
                 
-                my $len = $short & 0x3f;
+                my  $len = $short & 0x3f;
                 if( $len == 0x3f ){
                     $len = unpack "x${currentp}i", $first;
                     $currentp += $intsize;
@@ -247,65 +375,26 @@ sub convert9 { # with close handles
         }
 
         if( defined $result ){
-            $DEBUG and say STDERR "result: $result (". ($result + 2 - HEADER_SIZE) .")";
+        
+            my $attr_pos = $result + 2 - HEADER_SIZE;
             
-            my $target = unpack('C', substr($first, $result + 2 - HEADER_SIZE, 1) );
+            my $target = unpack('C', substr($first, $attr_pos, 1));
             $target |= 0x08;
-            substr($first, $result + 2 - HEADER_SIZE, 1, pack('C',$target));
+            substr($first, $attr_pos, 1, pack('C',$target));
 
-            $writer->($header_v9);
-            $total += length $header_v9;
-
-            $writer->($first);
-            $total += length $first;
-            
-            while( ! $r->eof ){
-                undef $buf;
-                $size = $r->read($buf, $buf_size);
-                if( ! defined $size or $size != $buf_size ){
-                    if( ! $r->eof ){
-                        die "Failed to read a chunk";
-                    }
-                }
-                $writer->($buf);
-                $total += length $buf;
-            }
+            $self->{_first_chunk} = [\$first];
+            $total += $self->_drain($input, $writer);
 
         }else{
 
-            $writer->($header_v9);
-            $total += length $header_v9;
-            
-            $buf = substr($first, 0, $offset );
-            $writer->($buf);
-            $total += length $buf;
-            
-            # magic
-            $buf = "\x44\x11\x08\x00\x00\x00";
-            $writer->($buf);
-            $total += length $buf;
-        
-            # remains
-            $buf = substr($first, $offset );
-            $writer->($buf);
-            $total += length $buf;
-        
-            while( ! $r->eof ){
-                undef $buf;
-                $size = $r->read($buf, $buf_size);
-                if( ! defined $size or $size != $buf_size ){
-                    if( ! $r->eof ){
-                        die "Failed to read a chunk";
-                    }
-                }
-                $writer->($buf);
-                $total += length $buf;
-            }
+            $self->{_first_chunk} = [
+                substr($first, 0, $offset),
+                "\x44\x11\x08\x00\x00\x00",
+                substr($first, $offset),
+                ];
+            $total += $self->_drain($input, $writer);
         }
     }
-    
-    $self->_close_w;
-    $self->_close_r;
     
     return $total;
 }
@@ -329,7 +418,8 @@ SWF::ForcibleConverter - convert SWF version forcibly
 
 =head1 DESCRIPTION
 
-SWF::ForcibleConverter converts format of SWF file into the version 9 forcibly.
+SWF::ForcibleConverter is a utility
+that converts format of SWF file into the version 9 forcibly.
 
 =head1 CONSTRUCTOR
 
@@ -343,31 +433,55 @@ The option has following keys are available.
 
 =head2 buffer_size
 
-Buffer size (bytes) when reading input data. Default is 4096.
+Buffer size (bytes) when reading input data.
+
+This is for accessing the member directly, without validation,
+please usually use [get|set]_buffer_size methods.
 
 =head1 METHOD
 
-=head2 buffer_size
+On the following explanation,
+$input and $output are file path or IO object.
 
-    my $size = $fc->buffer_size; # getter
-    $fc->buffer_size($integer);  # setter
+Both are omissible.
+In that case, it uses STDIN or STDOUT.
 
-An access method to buffer_size.
+    $ cat in.swf | perl -MSWF::ForcibleConverter -e \
+        'SWF::ForcibleConverter->new->convert9' > out.swf
 
-=head2 convert9
+=head2 get_buffer_size
+
+Get buffer size.
+
+=head2 set_buffer_size($num)
+
+Set buffer size.
+
+Note that it is 4096 necessity at least, or croak.
+
+=head2 version($input)
+
+Get version of SWF file.
+
+=head2 is_compressed($input)
+
+Return true if input is compressed
+
+=head2 uncompress($input, $output)
+
+Convert input SWF into uncompressed one.
+
+This method does not change format of version,
+simply outputs with uncompressing.
+
+=head2 convert9($input, $output)
 
     my $input   = "/path/to/original.swf";
     my $output  = "converted.swf";
     my $bytes   = $fc->convert9($input, $output);
 
-Convert input SWF into output SWF with changing format version 9.
-And it will return output file size.
-
-Both input and output are omissible.
-In that case, it uses STDIN or STDOUT.
-
-    $ cat in.swf | perl -MSWF::ForcibleConverter -e \
-        'SWF::ForcibleConverter->new->convert9' > out.swf
+Convert input SWF into output SWF with changing version 9.
+And it returns size of output.
 
 =head1 TODO
 
