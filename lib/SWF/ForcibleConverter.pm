@@ -3,7 +3,7 @@ package SWF::ForcibleConverter;
 use strict;
 use warnings;
 use vars qw($VERSION $DEBUG);
-$VERSION    = '0.01_03';
+$VERSION    = '0.01_04';
 $DEBUG      = $ENV{SWF_FORCIBLECONVERTER_DEBUG};
 
 use Carp qw/croak/;
@@ -30,8 +30,11 @@ sub new {
     $class = ref $class || $class;
     
     my $args = shift || {};
-    my $self = $args;
+    my $self = {};
     bless $self, $class;
+
+    $self->set_buffer_size( $args->{buffer_size} )
+        if( exists $args->{buffer_size} );
 
     # stash
     $self->{_r_io}          = undef; # handle for reading
@@ -59,11 +62,7 @@ sub set_buffer_size {
 }
 
 sub get_buffer_size {
-    my $self = shift;
-    my $size = $self->buffer_size;
-    croak "size of buffer is @{[ MIN_BUFFER_SIZE ]} necessity at least"
-        if( ! $size or $size < MIN_BUFFER_SIZE );
-    $size;
+    shift->buffer_size || MIN_BUFFER_SIZE;
 }
 
 #-----------------------------------------------------------
@@ -435,8 +434,7 @@ The option has following keys are available.
 
 Buffer size (bytes) when reading input data.
 
-This is for accessing the member directly, without validation,
-please usually use [get|set]_buffer_size methods.
+Note that it is 4096 necessity at least, or croak.
 
 =head1 METHOD
 
@@ -448,6 +446,11 @@ In that case, it uses STDIN or STDOUT.
 
     $ cat in.swf | perl -MSWF::ForcibleConverter -e \
         'SWF::ForcibleConverter->new->convert9' > out.swf
+
+=head2 buffer_size([$num])
+
+This is accessor. When $num is given, it sets the member directly, without validation.
+Please usually use [get|set]_buffer_size methods.
 
 =head2 get_buffer_size
 

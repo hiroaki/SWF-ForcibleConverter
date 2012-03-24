@@ -23,8 +23,7 @@ CONSTRUCTOR
   buffer_size
     Buffer size (bytes) when reading input data.
 
-    This is for accessing the member directly, without validation, please
-    usually use [get|set]_buffer_size methods.
+    Note that it is 4096 necessity at least, or croak.
 
 METHOD
     On the following explanation, $input and $output are file path or IO
@@ -34,6 +33,10 @@ METHOD
 
         $ cat in.swf | perl -MSWF::ForcibleConverter -e \
             'SWF::ForcibleConverter->new->convert9' > out.swf
+
+  buffer_size([$num])
+    This is accessor. When $num is given, it sets the member directly,
+    without validation. Please usually use [get|set]_buffer_size methods.
 
   get_buffer_size
     Get buffer size.
