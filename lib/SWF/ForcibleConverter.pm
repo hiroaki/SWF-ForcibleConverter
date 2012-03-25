@@ -3,7 +3,7 @@ package SWF::ForcibleConverter;
 use strict;
 use warnings;
 use vars qw($VERSION $DEBUG);
-$VERSION    = '0.01_04';
+$VERSION    = '0.01_05';
 $DEBUG      = $ENV{SWF_FORCIBLECONVERTER_DEBUG};
 
 use Carp qw/croak/;
@@ -25,6 +25,12 @@ sub create_io_uncompress {
         or die "Cannot create IO::Uncompress::Inflate: $IO::Uncompress::Inflate::InflateError";
 }
 
+sub create_io_compress {
+    require IO::Compress::Deflate;
+    IO::Compress::Deflate->new(@_)
+        or die "Cannot create IO::Compress::Deflate: $IO::Compress::Deflate::DeflateError";
+}
+
 sub new {
     my $class = shift;
     $class = ref $class || $class;
@@ -33,6 +39,7 @@ sub new {
     my $self = {};
     bless $self, $class;
 
+    # set with validation
     $self->set_buffer_size( $args->{buffer_size} )
         if( exists $args->{buffer_size} );
 
@@ -133,6 +140,12 @@ sub _switch_input_handle_to_uncompress {
     $self->{_r_io} = create_io_uncompress($input);
 }
 
+sub _switch_output_handle_to_compress {
+    my $self    = shift;
+    my $output  = shift;
+    $self->{_w_io} = create_io_compress($output, Append => 1 );
+}
+
 sub _version {
     my $self    = shift;
     my $header  = shift;
@@ -172,7 +185,7 @@ sub _modify_custom_header_to_compressed {
 
 sub _read_header {
     my $self    = shift;
-    my $input   = shift; # or STDIN
+    my $input   = shift;
     my $r = $self->_open_r($input);
 
     # skip if it already read header
@@ -192,7 +205,7 @@ sub _read_header {
 
 sub _read_first_chunk {
     my $self    = shift;
-    my $input   = shift; # or STDIN
+    my $input   = shift;
     my $r       = $self->_open_r($input);
     my $readsize= $self->get_buffer_size;
 
@@ -221,11 +234,45 @@ sub _read_first_chunk {
 sub _drain {
     my $self    = shift;
     my $input   = shift;
-    my $writer  = shift; # callback for writing
+    my $output  = shift;
+    my $options = shift || {};
+    
+    my $force_cws = ($options->{cws} || $options->{cws} ? 1 : 0);
+    my $force_fws = ($options->{fws} || $options->{fws} ? 1 : 0);
 
+    # ready to output
+    my $w;
+    my $writer;
+    if( ref($output) eq 'CODE' ){
+        $writer = $output;
+    }else{
+        $w = $self->_open_w($output);
+        $writer = sub {
+            $w->print($_[0]);
+        };
+    }
     my $total = 0;
 
-    for my $chunk ( ($self->{_header_v9}, @{$self->{_first_chunk}}) ){
+    # choose format of output as cws or fws
+    my $to_compress = $self->_is_compressed($self->{_header}) ? 1 : 0;
+    if( $force_cws != $force_fws ){
+        $to_compress = 1 if( $force_cws );
+        $to_compress = 0 if( $force_fws );
+    }
+
+    # print the header that is always uncompressed 8 bytes
+    if( $to_compress ){
+        $self->_modify_custom_header_to_compressed;
+        $writer->($self->{_header_v9});
+        $total += length $self->{_header_v9};
+        $w = $self->_switch_output_handle_to_compress( $w );
+    }else{
+        $writer->($self->{_header_v9});
+        $total += length $self->{_header_v9};
+    }
+
+    # print out buffered data
+    for my $chunk ( @{$self->{_first_chunk}} ){
         if( ref $chunk eq 'SCALAR' ){
             $writer->($$chunk); $total += length $$chunk;
         }else{
@@ -233,6 +280,7 @@ sub _drain {
         }
     }        
     
+    # print out unread data
     my $r = $self->_open_r($input);
     my $readsize = $self->get_buffer_size;
     while( ! $r->eof ){
@@ -247,6 +295,7 @@ sub _drain {
         $total += length $buf;
     }
 
+    # drain() can be called once
     $self->_close_w;
     $self->_close_r;
 
@@ -259,13 +308,13 @@ sub _drain {
 
 sub version {
     my $self    = shift;
-    my $input   = shift; # or STDIN
+    my $input   = shift;
     $self->_version($self->_read_header($input));
 }
 
 sub is_compressed {
     my $self    = shift;
-    my $input   = shift; # or STDIN
+    my $input   = shift;
     $self->_is_compressed($self->_read_header($input));
 }
 
@@ -275,20 +324,12 @@ sub is_compressed {
 
 sub uncompress {
     my $self    = shift;
-    my $input   = shift; # or STDIN
-    my $writer  = shift; # or STDOUT
-
-    # ready to output
-    if( ref($writer) ne 'CODE' ){
-        my $w = $self->_open_w($writer);
-        $writer = sub {
-            $w->print($_[0]);
-        };
-    }
+    my $input   = shift;
+    my $output  = shift;
 
     my $first = $self->_read_first_chunk($input);
     $self->{_first_chunk} = [\$first];
-    $self->_drain($input, $writer);
+    $self->_drain($input, $output);
 }
 
 sub _get_body_position { # function for ->covert9()
@@ -310,8 +351,15 @@ sub _get_body_position { # function for ->covert9()
 
 sub convert9 {
     my $self    = shift;
-    my $input   = shift; # or STDIN
-    my $writer  = shift; # or STDOUT
+    my $input   = shift;
+    my $output  = shift;
+    my $options;
+    if( scalar @_ == 1 ){
+        $options = shift @_;
+    }else{
+        my %opts = @_;
+        $options = \%opts;
+    }
 
     # prepare
     my $header      = $self->_read_header($input);
@@ -328,19 +376,11 @@ sub convert9 {
         $self->_modify_custom_header_to_version_9;
     }
 
-    # ready to output
-    if( ref($writer) ne 'CODE' ){
-        my $w = $self->_open_w($writer);
-        $writer = sub {
-            $w->print($_[0]);
-        };
-    }
-
     my $total = 0;
     if( 9 <= $version ){
         # simply, copy (but uncompressed)
         $self->{_first_chunk} = [\$first];
-        $total += $self->_drain($input, $writer);
+        $total += $self->_drain($input, $output, $options);
 
     }else{
     
@@ -382,7 +422,7 @@ sub convert9 {
             substr($first, $attr_pos, 1, pack('C',$target));
 
             $self->{_first_chunk} = [\$first];
-            $total += $self->_drain($input, $writer);
+            $total += $self->_drain($input, $output, $options);
 
         }else{
 
@@ -391,11 +431,25 @@ sub convert9 {
                 "\x44\x11\x08\x00\x00\x00",
                 substr($first, $offset),
                 ];
-            $total += $self->_drain($input, $writer);
+            $total += $self->_drain($input, $output, $options);
         }
     }
     
     return $total;
+}
+
+sub convert9_compress {
+    my $self    = shift;
+    my $input   = shift;
+    my $output  = shift;
+    $self->convert9($input, $output, { cws => 1 });
+}
+
+sub convert9_uncompress {
+    my $self    = shift;
+    my $input   = shift;
+    my $output  = shift;
+    $self->convert9($input, $output, { fws => 1 });
 }
 
 1;
@@ -447,6 +501,8 @@ In that case, it uses STDIN or STDOUT.
     $ cat in.swf | perl -MSWF::ForcibleConverter -e \
         'SWF::ForcibleConverter->new->convert9' > out.swf
 
+Note that when using STDIO, uncompress() or convert9*() can be called only once.
+
 =head2 buffer_size([$num])
 
 This is accessor. When $num is given, it sets the member directly, without validation.
@@ -486,9 +542,21 @@ simply outputs with uncompressing.
 Convert input SWF into output SWF with changing version 9.
 And it returns size of output.
 
-=head1 TODO
+Note that if the input is compressed format, that is known as CWS,
+output is CWS as well. The another case is uncompressed, as FWS.
+Please call convert9_compress() or convert9_uncompress() to force.
 
-Currently, an output is always uncompressed.
+=head2 convert9_compress($input, $output)
+
+convert9_compress() is the same as convert9() 
+except for the output is always compressed (that is CWS).
+
+=head2 convert9_uncompress($input, $output)
+
+convert9_uncompress() is the same as convert9() 
+except for the output is always uncompressed (that is FWS).
+
+=head1 TODO
 
 Will it be able to support the other versions?
 It is difficult for me... :-(

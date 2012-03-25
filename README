@@ -34,6 +34,9 @@ METHOD
         $ cat in.swf | perl -MSWF::ForcibleConverter -e \
             'SWF::ForcibleConverter->new->convert9' > out.swf
 
+    Note that when using STDIO, uncompress() or convert9*() can be called
+    only once.
+
   buffer_size([$num])
     This is accessor. When $num is given, it sets the member directly,
     without validation. Please usually use [get|set]_buffer_size methods.
@@ -66,9 +69,19 @@ METHOD
     Convert input SWF into output SWF with changing version 9. And it
     returns size of output.
 
-TODO
-    Currently, an output is always uncompressed.
+    Note that if the input is compressed format, that is known as CWS,
+    output is CWS as well. The another case is uncompressed, as FWS. Please
+    call convert9_compress() or convert9_uncompress() to force.
 
+  convert9_compress($input, $output)
+    convert9_compress() is the same as convert9() except for the output is
+    always compressed (that is CWS).
+
+  convert9_uncompress($input, $output)
+    convert9_uncompress() is the same as convert9() except for the output is
+    always uncompressed (that is FWS).
+
+TODO
     Will it be able to support the other versions? It is difficult for me...
     :-(
 
