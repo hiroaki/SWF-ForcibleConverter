@@ -3,7 +3,7 @@ package SWF::ForcibleConverter;
 use strict;
 use warnings;
 use vars qw($VERSION $DEBUG);
-$VERSION    = '0.01_05';
+$VERSION    = '0.01_06';
 $DEBUG      = $ENV{SWF_FORCIBLECONVERTER_DEBUG};
 
 use Carp qw/croak/;
@@ -329,7 +329,7 @@ sub uncompress {
 
     my $first = $self->_read_first_chunk($input);
     $self->{_first_chunk} = [\$first];
-    $self->_drain($input, $output);
+    $self->_drain($input, $output, { fws => 1 });
 }
 
 sub _get_body_position { # function for ->covert9()
