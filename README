@@ -11,6 +11,13 @@ DESCRIPTION
     SWF::ForcibleConverter is a utility that converts format of SWF file
     into the version 9 forcibly.
 
+    This program processes SWF that has version number of format less than
+    9. 9 or more version SWF will be treated as it is, except
+    compressibility change.
+
+    Note that the reason of the changing is my algorithm, it inflates a file
+    once. But this point does not become a problem.
+
 CONSTRUCTOR
     An constructor new() accepts an hash reference as configure option.
 

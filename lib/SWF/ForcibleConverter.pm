@@ -3,13 +3,16 @@ package SWF::ForcibleConverter;
 use strict;
 use warnings;
 use vars qw($VERSION $DEBUG);
-$VERSION    = '0.01_06';
+$VERSION    = '0.01_07';
 $DEBUG      = $ENV{SWF_FORCIBLECONVERTER_DEBUG};
 
 use Carp qw/croak/;
 
 use constant HEADER_SIZE        =>    8;
 use constant MIN_BUFFER_SIZE    => 4096;
+
+use vars qw($COMPRESSION_LEVEL);
+$COMPRESSION_LEVEL = 6;
 
 sub create_io_file {
     require IO::File; IO::File->new(@_);
@@ -143,7 +146,7 @@ sub _switch_input_handle_to_uncompress {
 sub _switch_output_handle_to_compress {
     my $self    = shift;
     my $output  = shift;
-    $self->{_w_io} = create_io_compress($output, Append => 1 );
+    $self->{_w_io} = create_io_compress($output, Append => 1, -Level => $COMPRESSION_LEVEL );
 }
 
 sub _version {
@@ -473,6 +476,12 @@ SWF::ForcibleConverter - convert SWF version forcibly
 
 SWF::ForcibleConverter is a utility
 that converts format of SWF file into the version 9 forcibly.
+
+This program processes SWF that has version number of format less than 9.
+9 or more version SWF will be treated as it is, except compressibility change.
+
+Note that the reason of the changing is my algorithm, it inflates a file once.
+But this point does not become a problem.
 
 =head1 CONSTRUCTOR
 
