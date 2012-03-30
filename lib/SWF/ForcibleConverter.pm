@@ -3,7 +3,7 @@ package SWF::ForcibleConverter;
 use strict;
 use warnings;
 use vars qw($VERSION $DEBUG);
-$VERSION    = '0.01_07';
+$VERSION    = '0.01';
 $DEBUG      = $ENV{SWF_FORCIBLECONVERTER_DEBUG};
 
 use Carp qw/croak/;
@@ -76,6 +76,8 @@ sub get_buffer_size {
 }
 
 #-----------------------------------------------------------
+#
+#
 
 sub _open_r {
     my $self = shift;
@@ -463,7 +465,7 @@ __END__
 
 =head1 NAME
 
-SWF::ForcibleConverter - convert SWF version forcibly
+SWF::ForcibleConverter - Convert SWF file into version 9 format forcibly if version is under 9
 
 =head1 SYNOPSIS
 
@@ -475,37 +477,42 @@ SWF::ForcibleConverter - convert SWF version forcibly
 =head1 DESCRIPTION
 
 SWF::ForcibleConverter is a utility
-that converts format of SWF file into the version 9 forcibly.
+that converts SWF file into version 9 format forcibly.
 
 This program processes SWF that has version number of format less than 9.
-9 or more version SWF will be treated as it is, except compressibility change.
+And version 9 or upper versions will be treated as it is,
+without converting, except compressibility change.
 
-Note that the reason of the changing is my algorithm, it inflates a file once.
+A reason of the changing is convenient for my algorithm, it inflates a file once.
 But this point does not become a problem.
 
 =head1 CONSTRUCTOR
 
-An constructor new() accepts an hash reference as configure option.
+The constructor new() receives hash reference as an option. 
 
     my $fc = SWF::ForcibleConverter->new({
                 buffer_size => 4096,
                 });
 
-The option has following keys are available.
+The option has following key that is available.
 
 =head2 buffer_size
 
 Buffer size (bytes) when reading input data.
 
-Note that it is 4096 necessity at least, or croak.
+At least 4096 is required, or croak.
+
+Default is 4096.
 
 =head1 METHOD
 
 On the following explanation,
-$input and $output are file path or IO object.
+$input or $output are file path or opened IO object.
 
 Both are omissible.
 In that case, it uses STDIN or STDOUT.
+
+As follows, this is convenient because of pipe processing. 
 
     $ cat in.swf | perl -MSWF::ForcibleConverter -e \
         'SWF::ForcibleConverter->new->convert9' > out.swf
@@ -515,7 +522,7 @@ Note that when using STDIO, uncompress() or convert9*() can be called only once.
 =head2 buffer_size([$num])
 
 This is accessor. When $num is given, it sets the member directly, without validation.
-Please usually use [get|set]_buffer_size methods.
+Regularly, please use [get|set]_buffer_size methods.
 
 =head2 get_buffer_size
 
@@ -525,21 +532,21 @@ Get buffer size.
 
 Set buffer size.
 
-Note that it is 4096 necessity at least, or croak.
+At least 4096 is required, or croak.
 
 =head2 version($input)
 
-Get version of SWF file.
+Get version number of SWF file.
 
 =head2 is_compressed($input)
 
-Return true if input is compressed
+Return true if $input is compressed.
 
 =head2 uncompress($input, $output)
 
-Convert input SWF into uncompressed one.
+Convert $input SWF into uncompressed $output SWF.
 
-This method does not change format of version,
+This method does not change version format,
 simply outputs with uncompressing.
 
 =head2 convert9($input, $output)
@@ -548,27 +555,27 @@ simply outputs with uncompressing.
     my $output  = "converted.swf";
     my $bytes   = $fc->convert9($input, $output);
 
-Convert input SWF into output SWF with changing version 9.
-And it returns size of output.
+Convert $input SWF into $output SWF with changing version 9 format forcibly.
+And it returns size of $output.
 
-Note that if the input is compressed format, that is known as CWS,
-output is CWS as well. The another case is uncompressed, as FWS.
-Please call convert9_compress() or convert9_uncompress() to force.
+Note that if the $input is compressed format, that is known as CWS,
+$output will be CWS as well.
+The another case is uncompressed, as FWS.
+You can call convert9_compress() or convert9_uncompress() instead.
 
 =head2 convert9_compress($input, $output)
 
 convert9_compress() is the same as convert9() 
-except for the output is always compressed (that is CWS).
+except $output is always compressed (that is CWS).
 
 =head2 convert9_uncompress($input, $output)
 
 convert9_uncompress() is the same as convert9() 
-except for the output is always uncompressed (that is FWS).
+except $output is always uncompressed (that is FWS).
 
-=head1 TODO
+=head1 REPOSITORY
 
-Will it be able to support the other versions?
-It is difficult for me... :-(
+SWF::ForcibleConverter is hosted on github https://github.com/hiroaki/SWF-ForcibleConverter
 
 =head1 AUTHOR
 
