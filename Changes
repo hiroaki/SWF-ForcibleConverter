@@ -1,4 +1,10 @@
 Revision history for Perl extension SWF::ForcibleConverter
 
+{{$NEXT}}
+        - No change in features
+        - Clear distraction files
+        - I begin to use milla
+
 0.01  Sat Mar 31 01:00:00 2012
 	- original version
+
