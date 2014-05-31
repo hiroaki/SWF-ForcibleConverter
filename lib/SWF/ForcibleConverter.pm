@@ -3,7 +3,7 @@ package SWF::ForcibleConverter;
 use strict;
 use warnings;
 use vars qw($VERSION $DEBUG);
-$VERSION    = '0.01';
+$VERSION    = '0.02';
 $DEBUG      = $ENV{SWF_FORCIBLECONVERTER_DEBUG};
 
 use Carp qw/croak/;
@@ -476,7 +476,7 @@ SWF::ForcibleConverter - Convert SWF file into version 9 format forcibly if vers
 
 =head1 DESCRIPTION
 
-SWF::ForcibleConverter is a utility
+SWF::ForcibleConverter is an utility
 that converts SWF file into version 9 format forcibly.
 
 This program processes SWF that has version number of format less than 9.
@@ -579,7 +579,7 @@ SWF::ForcibleConverter is hosted on github https://github.com/hiroaki/SWF-Forcib
 
 =head1 AUTHOR
 
-WATANABE Hiroaki E<lt>hwat@mac.comE<gt>
+WATANABE Hiroaki E<lt>hwat@cpan.orgE<gt>
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
