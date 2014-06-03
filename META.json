@@ -31,12 +31,7 @@
       },
       "configure" : {
          "requires" : {
-            "Module::Build::Tiny" : "0.036"
-         }
-      },
-      "develop" : {
-         "requires" : {
-            "Test::Pod" : "1.41"
+            "ExtUtils::MakeMaker" : "6.30"
          }
       },
       "runtime" : {
